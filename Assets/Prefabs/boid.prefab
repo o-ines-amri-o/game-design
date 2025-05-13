@@ -128,14 +128,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6483e3f4cf1d07e498665ebd3936d23d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  speed: 2
-  neighborRadius: 2
-  separationRadius: 1
-  alignmentWeight: 1
-  cohesionWeight: 1
-  separationWeight: 1.5
+  speed: 5
+  neighborRadius: 4
+  separationRadius: 1.2
+  alignmentWeight: 2
+  cohesionWeight: 1.2
+  separationWeight: 2
   obstacleMask:
     serializedVersion: 2
     m_Bits: 8
-  obstacleAvoidanceDistance: 10
-  obstacleAvoidanceForce: 10
+  obstacleAvoidanceDistance: 15
+  obstacleAvoidanceForce: 2
