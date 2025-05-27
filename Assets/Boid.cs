@@ -1,124 +1,221 @@
-using System.Collections.Generic;
 using UnityEngine;
+using System.Collections.Generic;
 
 public class Boid : MonoBehaviour
 {
-    public float speed = 2f;
-    public float neighborRadius = 2.5f;
-    public float separationRadius = 1.2f;
+    public Vector2 position;
+    public Vector2 velocity;
+    public Vector2 acceleration;
+    public float maxForce = 0.02f;
+    public float maxSpeed = 1f;
+    public float perceptionRadius = 50f;
 
-    public float alignmentWeight = 1f;
-    public float cohesionWeight = 0.6f;
-    public float separationWeight = 2f;
+    private Transform player;
 
-    public LayerMask obstacleMask;
-    public float obstacleAvoidanceDistance = 1.5f;
-    public float obstacleAvoidanceForce = 2f;
-
-    private Vector2 velocity;
-
-    void Start()
+    private void Start()
     {
-        velocity = Random.insideUnitCircle.normalized * speed;
+        position = transform.position;
+        velocity = Random.insideUnitCircle.normalized * Random.Range(2f, 4f);
+        acceleration = Vector2.zero;
     }
 
-    void Update()
+    public void SetPlayer(Transform _player)
     {
-        List<Boid> neighbors = GetNeighbors();
+        player = _player;
+    }
 
-        Vector2 alignment = Vector2.zero;
-        Vector2 cohesion = Vector2.zero;
-        Vector2 separation = Vector2.zero;
+    
 
-        int neighborCount = 0;
+private void FollowPlayer(List<Boid> boids)
+{
+    // --- Follow player (arrival behavior) ---
+    Vector2 desired = (Vector2)player.position - position;
+    float distance = desired.magnitude;
+    Vector2 direction = desired.normalized;
 
-        foreach (Boid boid in neighbors)
+    // Smooth arrival speed based on distance
+    float arrivalSpeed = Mathf.Min(maxSpeed, Mathf.Sqrt(distance) * 2f);
+    Vector2 arriveVelocity = direction * arrivalSpeed;
+
+    // --- Separation behavior ---
+    Vector2 separation = Separation(boids);
+
+    // --- Combine: prioritize separation more if very close ---
+    float separationWeight = 100f;
+    Vector2 combinedVelocity = arriveVelocity + separation * separationWeight;
+    // Clamp and move
+    velocity = Vector2.ClampMagnitude(combinedVelocity, maxSpeed);
+    position += velocity * Time.deltaTime;
+    transform.position = position;
+    acceleration = Vector2.zero;
+}
+
+
+
+
+
+    private void Update()
+    {
+        if (player != null)
         {
-            if (boid == this) continue;
+            FollowPlayer(BoidManager.Instance.boids);
+            DrawBoid();
 
-            float dist = Vector2.Distance(transform.position, boid.transform.position);
+        } else {
+            Flock(BoidManager.Instance.boids);
+            UpdateBoid();
+            Edges();
+            DrawBoid();
+        }
+        
+    }
 
-            alignment += boid.velocity;
-            cohesion += (Vector2)boid.transform.position;
+    public virtual void Flock(List<Boid> boids)
+    {
+        Vector2 alignment = Align(boids);
+        Vector2 cohesion = Cohesion(boids);
+        Vector2 separation = Separation(boids);
 
-            if (dist < separationRadius)
+        alignment *= 1.0f;
+        cohesion *= 1.0f;
+        separation *= 1.5f;
+
+        acceleration += alignment + cohesion + separation;
+    }
+
+    Vector2 Align(List<Boid> boids)
+    {
+        Vector2 steering = Vector2.zero;
+        int total = 0;
+
+        foreach (Boid other in boids)
+        {
+            if (other == this) continue;
+
+            float d = Vector2.Distance(position, other.position);
+            if (d < perceptionRadius)
             {
-                Vector2 diff = (Vector2)(transform.position - boid.transform.position);
-                separation += diff.normalized / (dist * dist);
-            }
-
-            neighborCount++;
-        }
-
-        if (neighborCount > 0)
-        {
-            // Alignment: match average neighbor velocity (scaled diff)
-            Vector2 avgVelocity = alignment / neighborCount;
-            alignment = (avgVelocity - velocity) * 0.1f * alignmentWeight;
-
-            // Cohesion: move a little toward center of mass
-            Vector2 centerOfMass = cohesion / neighborCount;
-            Vector2 directionToCenter = (centerOfMass - (Vector2)transform.position);
-            cohesion = directionToCenter * 0.05f * cohesionWeight;
-
-            // Separation: already weighted by distance
-            separation *= separationWeight;
-        }
-
-        // Obstacle avoidance
-        Vector2 obstacleAvoidance = Vector2.zero;
-        RaycastHit2D hit = Physics2D.Raycast(transform.position, velocity.normalized, obstacleAvoidanceDistance, obstacleMask);
-        if (hit.collider != null)
-        {
-            float distanceToObstacle = hit.distance;
-            if (distanceToObstacle < 1f)
-            {
-                // Steer to the side
-                Vector2 rightTurn = new Vector2(-velocity.y, velocity.x).normalized;
-                Vector2 leftTurn = new Vector2(velocity.y, -velocity.x).normalized;
-                Vector2 sideStep = Vector2.Dot(rightTurn, hit.normal) > 0 ? rightTurn : leftTurn;
-                obstacleAvoidance = sideStep * obstacleAvoidanceForce * 2f;
-            }
-            else
-            {
-                float avoidanceStrength = (1f - (distanceToObstacle / obstacleAvoidanceDistance)) * obstacleAvoidanceForce;
-                obstacleAvoidance = hit.normal * avoidanceStrength;
+                steering += other.velocity;
+                total++;
             }
         }
 
-        // Final velocity and movement
-        Vector2 acceleration = alignment + cohesion + separation + obstacleAvoidance;
-        velocity += acceleration * Time.deltaTime;
-        velocity = Vector2.ClampMagnitude(velocity, speed);
-
-        transform.position += (Vector3)(velocity * Time.deltaTime);
-
-        // Rotate to face movement direction
-        if (velocity.sqrMagnitude > 0.01f)
+        if (total > 0)
         {
-            float angle = Mathf.Atan2(velocity.y, velocity.x) * Mathf.Rad2Deg;
-            transform.rotation = Quaternion.Euler(0, 0, angle);
+            steering /= total;
+            steering = steering.normalized * maxSpeed;
+            steering -= velocity;
+            steering = Vector2.ClampMagnitude(steering, maxForce);
         }
+
+        return steering;
     }
 
-    List<Boid> GetNeighbors()
+    Vector2 Cohesion(List<Boid> boids)
     {
-        Boid[] allBoids = FindObjectsOfType<Boid>();
-        List<Boid> neighbors = new List<Boid>();
+        Vector2 steering = Vector2.zero;
+        int total = 0;
 
-        foreach (Boid boid in allBoids)
+        foreach (Boid other in boids)
         {
-            if (boid == this) continue;
-            if (Vector2.Distance(transform.position, boid.transform.position) <= neighborRadius)
-                neighbors.Add(boid);
+            if (other == this) continue;
+
+            float d = Vector2.Distance(position, other.position);
+            if (d < perceptionRadius)
+            {
+                steering += other.position;
+                total++;
+            }
         }
 
-        return neighbors;
+        if (total > 0)
+        {
+            steering /= total;
+            steering -= position;
+            steering = steering.normalized * maxSpeed;
+            steering -= velocity;
+            steering = Vector2.ClampMagnitude(steering, maxForce);
+        }
+
+        return steering;
     }
 
-    void OnDrawGizmos()
+    Vector2 Separation(List<Boid> boids)
     {
-        Gizmos.color = Color.red;
-        Gizmos.DrawLine(transform.position, transform.position + (Vector3)(velocity.normalized * obstacleAvoidanceDistance));
+        Vector2 steering = Vector2.zero;
+        int total = 0;
+        float desiredSeparation = 24f;
+
+        foreach (Boid other in boids)
+        {
+            if (other == this) continue;
+
+            float d = Vector2.Distance(position, other.position);
+            if (d < desiredSeparation && d > 0)
+            {
+                Vector2 diff = position - other.position;
+                diff /= (d * d);
+                steering += diff;
+                total++;
+            }
+        }
+
+        if (total > 0)
+        {
+            steering /= total;
+            steering = steering.normalized * maxSpeed;
+            steering -= velocity;
+            steering = Vector2.ClampMagnitude(steering, maxForce);
+        }
+
+        return steering;
     }
+
+    public void UpdateBoid()
+    {
+        velocity += acceleration;
+        velocity = Vector2.ClampMagnitude(velocity, maxSpeed);
+        position += velocity * Time.deltaTime;
+        transform.position = position;
+        acceleration = Vector2.zero;
+    }
+
+
+
+    public void Edges()
+    {
+        Vector3 worldMin = Vector3.zero;
+        Vector3 worldMax = new Vector3(500f, 300f, 0f);
+    
+        if (position.x > worldMax.x)
+        {
+            position.x = worldMax.x;
+            velocity.x *= -1;
+        }
+        else if (position.x < worldMin.x)
+        {
+            position.x = worldMin.x;
+            velocity.x *= -1;
+        }
+    
+        if (position.y > worldMax.y)
+        {
+            position.y = worldMax.y;
+            velocity.y *= -1;
+        }
+        else if (position.y < worldMin.y)
+        {
+            position.y = worldMin.y;
+            velocity.y *= -1;
+        }
+    }
+
+ 
+
+    public void DrawBoid()
+    {
+        float angle = Mathf.Atan2(velocity.y, velocity.x) * Mathf.Rad2Deg + 90f;
+        transform.rotation = Quaternion.Euler(0, 0, angle);
+    }
+
 }
